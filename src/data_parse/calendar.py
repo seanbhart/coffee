@@ -21,8 +21,8 @@ data = {}
 
 def calendar_data_update(link, sheet_name, db_name):
     # Reset the dict
+    global data
     data = {}
-    print('data length: %d' % len(data))
 
     # Get the workbook from the link
     wb = utils.get_workbook_at(link)
@@ -43,7 +43,7 @@ def calendar_data_update(link, sheet_name, db_name):
         # skip the header row
         for row in range(topRow+1, sheet.nrows):
 
-            # If the cell contains the word 'inventories'
+            # If the location cell contains the word 'inventories'
             # or is empty it is not a countable cell
             inventories_text_start = sheet.cell(row, location_col).value.find('Inventories')
             if inventories_text_start == -1 and sheet.cell(row, location_col).value != "":
@@ -81,8 +81,8 @@ def calendar_data_update(link, sheet_name, db_name):
 
                 # Get the value to use after checking for split locations
                 value = calculate_location_total(id, value)
-                # print("%s, %d, %d, %d" % (id, year, location_id, value))
 
+                # print("%s, %d, %d, %d" % (id, year, location_id, value))
                 insert = ("INSERT INTO " + db_name +
                           " (id,year,location_id,value)"
                           " VALUES (%s, %s, %s, %s)"
@@ -125,16 +125,10 @@ def find_sheet(workbook, sheet_name):
 
 
 if __name__ == "__main__":
-    print("calendar update")
+    print("ICO calendar year data update")
     calendar_data_update(link_importers_inventory, 'Inventories', 'calendar_inventory')
-    data = {}  # Reset the dict
     calendar_data_update(link_importers_imports, 'Imports', 'calendar_imports')
-    data = {}  # Reset the dict
     calendar_data_update(link_importers_other_imports, 'Imports', 'calendar_imports')
-    data = {}  # Reset the dict
     calendar_data_update(link_importers_exports, 'Re-exports', 'calendar_exports')
-    data = {}  # Reset the dict
     calendar_data_update(link_importers_other_exports, 'Re-exports', 'calendar_exports')
-    data = {}  # Reset the dict
     calendar_data_update(link_importers_consumption, 'Disappearance', 'calendar_consumption')
-    data = {}  # Reset the dict

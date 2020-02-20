@@ -45,7 +45,8 @@ def get_months():
         connector.commit()
 
         # return SQL result
-        records = dict(cursor.fetchall())
+        records_raw = dict(cursor.fetchall())
+        records = {y:x for x,y in records_raw.items()}
         return records
 
     except psycopg2.Error as e:
