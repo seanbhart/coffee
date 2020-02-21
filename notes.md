@@ -54,6 +54,165 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO coffeeadmin;
 
 
 ## OTHER SQL
+#------------------------------------------------
+# Find Parent Locations - Compare EXISTS vs DISTINCT (EXISTS wins 80+%)
+EXPLAIN ANALYZE
+SELECT title
+FROM location l
+WHERE EXISTS (
+        SELECT id
+        FROM location
+        WHERE parent_location_id=l.id
+    )
+ORDER BY title;
+
+EXPLAIN ANALYZE
+SELECT DISTINCT l.title
+FROM location l
+INNER JOIN location lo ON lo.parent_location_id=l.id
+ORDER BY title;
+#------------------------------------------------
+# List Production by Location - Compare CROSS join vs INNER join (INNER wins slightly more)
+EXPLAIN ANALYZE
+SELECT l.title, p.value
+FROM seasonal_production p
+CROSS JOIN location l
+WHERE p.location_id=l.id;
+
+EXPLAIN ANALYZE
+SELECT l.title, p.value
+FROM seasonal_production p
+INNER JOIN location l ON p.location_id=l.id;
+#------------------------------------------------
+# Compare HAVING vs FROM sub-query (very similar results)
+EXPLAIN ANALYZE
+SELECT p.location_id, SUM(p.value) / COUNT(p.location_id)
+FROM seasonal_production p
+GROUP BY p.location_id
+HAVING SUM(p.value) / COUNT(p.location_id) > 1000
+ORDER BY p.location_id;
+
+EXPLAIN ANALYZE
+SELECT x.location_id, SUM(x.production_average)
+FROM (
+    SELECT p.location_id, SUM(p.value) / COUNT(p.location_id) production_average
+    FROM seasonal_production p
+    GROUP BY p.location_id
+) x
+WHERE x.production_average > 1000
+GROUP BY x.location_id
+ORDER BY x.location_id;
+#------------------------------------------------
+# Compare INNER JOIN vs INTERSECT (INTERSECT much faster)
+EXPLAIN ANALYZE
+SELECT DISTINCT ci.location_id FROM calendar_imports ci 
+INNER JOIN calendar_exports ce ON ce.location_id = ci.location_id
+ORDER BY ci.location_id
+LIMIT 50;
+
+EXPLAIN ANALYZE
+SELECT ci.location_id FROM calendar_imports ci 
+INTERSECT
+SELECT ce.location_id FROM calendar_exports ce
+ORDER BY location_id
+LIMIT 50;
+#------------------------------------------------
+# CROSS JOIN LATERAL
+EXPLAIN ANALYZE
+SELECT l.title, cal.year, cal.type, cal.value 
+FROM location l 
+INNER JOIN
+    (
+        SELECT ci.location_id, ci.year, t.* 
+        FROM calendar_imports ci 
+        INNER JOIN calendar_exports ce ON ci.location_id=ce.location_id AND ci.year=ce.year 
+        CROSS JOIN LATERAL
+        (
+            VALUES
+            (ci.value, 'imports'),
+            (ce.value, 'exports')
+        ) AS t(value, type)
+    ) AS cal
+ON cal.location_id=l.id 
+WHERE l.title='USA' AND cal.year>2014 
+ORDER BY cal.year ASC;
+
+# All USA calendar year data
+SELECT l.title, cal3.year, cal3.inventory * 66.138679 AS inventory, cal3.imports * 66.138679 AS imports, cal3.exports * 66.138679 AS exports, cal3.consumption * 66.138679 AS consumption, (cal3.inventory + cal3.imports + cal3.exports + cal3.consumption) * 66.138679 AS net
+FROM location l 
+INNER JOIN
+    (
+        SELECT cons.location_id, cons.year, cal2.inventory, cal2.imports, cal2.exports, 
+            CASE 
+                WHEN cons.value > 0 THEN cons.value * -1 
+            END AS consumption 
+        FROM calendar_consumption cons 
+        INNER JOIN
+            (
+                SELECT inv.location_id, inv.year, inv.value as inventory, cal.imports, cal.exports 
+                FROM calendar_inventory inv 
+                INNER JOIN
+                    (
+                        SELECT ci.location_id, ci.year, ci.value AS imports,  
+                            CASE  
+                                WHEN ce.value > 0 THEN ce.value * -1 
+                            END AS exports 
+                        FROM calendar_imports ci 
+                        INNER JOIN calendar_exports ce ON ci.location_id=ce.location_id AND ci.year=ce.year
+                    ) AS cal
+                ON cal.location_id=inv.location_id AND inv.year=cal.year
+            ) AS cal2
+        ON cal2.location_id=cons.location_id AND cons.year=cal2.year
+    ) AS cal3
+ON cal3.location_id=l.id
+WHERE l.title='USA' AND cal3.year>2008
+ORDER BY cal3.year ASC;
+
+# Compare calculated ending inventory with reported next year inventory
+SELECT cal2.year, SUM(inv.value * 66.138679), SUM((pinv.value + cal2.imports + cal2.exports + cal2.consumption) * 66.138679) AS "prior net", SUM(inv.value * 66.138679) - SUM((pinv.value + cal2.imports + cal2.exports + cal2.consumption) * 66.138679) AS discrepancy
+FROM calendar_inventory inv 
+INNER JOIN
+    (
+        SELECT cons.location_id, cons.year, cal.imports, cal.exports,
+            CASE 
+                WHEN cons.value > 0 THEN cons.value * -1 
+            END AS consumption 
+        FROM calendar_consumption cons 
+        INNER JOIN
+            (
+                SELECT ci.location_id, ci.year, ci.value AS imports,  
+                    CASE  
+                        WHEN ce.value > 0 THEN ce.value * -1 
+                    END AS exports 
+                FROM calendar_imports ci 
+                INNER JOIN calendar_exports ce ON ci.location_id=ce.location_id AND ci.year=ce.year
+            ) AS cal
+        ON cal.location_id=cons.location_id AND cons.year=cal.year
+    ) AS cal2
+ON cal2.location_id=inv.location_id AND inv.year=cal2.year
+INNER JOIN calendar_inventory pinv ON pinv.location_id=cal2.location_id AND pinv.year=cal2.year-1
+WHERE cal2.year>2008
+GROUP BY cal2.year
+ORDER BY cal2.year ASC;
+
+# (TODO) Compare calculated ending inventory with reported next year inventory at regional levels
+SELECT title
+FROM location l
+WHERE EXISTS (
+        SELECT id
+        FROM location
+        WHERE parent_location_id=l.id
+    )
+ORDER BY title;
+
+SELECT title
+FROM location l
+ON cal4.location_id=l.id
+WHERE parent_location_id=0
+ORDER BY title;
+
+
+
 SELECT relation::regclass, * FROM pg_locks WHERE NOT GRANTED;
 
 ALTER TABLE production DROP CONSTRAINT production_pkey;
@@ -61,33 +220,7 @@ ALTER TABLE production ALTER COLUMN value float;
 ALTER TABLE production ADD COLUMN region text;
 ALTER TABLE production RENAME COLUMN production TO id;
 ALTER TABLE production ADD PRIMARY KEY (id);
-
 ALTER TABLE consumption ADD CONSTRAINT consumption_pkey PRIMARY KEY (id);
-
-SELECT * FROM calendar_consumption WHERE year=2018 ORDER BY location_id DESC LIMIT 5;
-SELECT lid.title AS location,pid.title AS parent,cons.year,cons.value AS consumption
-FROM calendar_consumption cons
-INNER JOIN location lid ON cons.location_id=lid.id
-INNER JOIN location pid ON lid.parent_location_id=pid.id
-WHERE year=2018 ORDER BY location_id ASC LIMIT 5;
-
-SELECT location.location,calendar_imports.year,calendar_imports.value
-FROM calendar_imports
-INNER JOIN location
-ON calendar_imports.location=location.id
-WHERE year=1990;
-
-SELECT location.location,location.parent,calendar_exports.year,calendar_exports.value
-FROM calendar_exports
-INNER JOIN location
-ON calendar_exports.location=location.id
-WHERE year=1990
-ORDER BY parent ASC,location ASC;
-
-SELECT year,SUM(value) FROM calendar_exports GROUP BY year ORDER BY year;
-
-INSERT INTO location_name (id,name) VALUES (2,'Central America & Mexico');
-
 
 SELECT l.location,ce.year AS eyr,ce.value AS exports,ci.year AS iyr,ci.value AS imports 
 FROM location l
@@ -113,79 +246,15 @@ WHERE l.location='USA' AND cal.year>2014
 ORDER BY cal.year ASC;
 
 
-SELECT l.location, cal.year, cal.type, cal.value 
-FROM location l 
-INNER JOIN
-    (
-        SELECT ci.location, ci.year, t.* 
-        FROM calendar_imports ci 
-        INNER JOIN calendar_exports ce ON ci.location=ce.location AND ci.year=ce.year 
-        CROSS JOIN LATERAL
-        (
-            VALUES
-            (ci.value, 'imports'),
-            (ce.value, 'exports')
-        ) AS t(value, type)
-    ) AS cal
-ON cal.location=l.id 
-WHERE l.location='USA' AND cal.year>2014 
-ORDER BY cal.year ASC;
-
-SELECT l.location, cal3.year, cal3.inventory, cal3.imports, cal3.exports, cal3.consumption, cal3.inventory + cal3.imports + cal3.exports + cal3.consumption AS net
-FROM location l 
-INNER JOIN
-    (
-        SELECT cons.location, cons.year, cal2.inventory, cal2.imports, cal2.exports, 
-            CASE 
-                WHEN cons.value > 0 THEN cons.value * -1 
-            END AS consumption 
-        FROM calendar_consumption cons 
-        INNER JOIN
-            (
-                SELECT inv.location, inv.year, inv.value as inventory, cal.imports, cal.exports 
-                FROM calendar_inventory inv 
-                INNER JOIN
-                    (
-                        SELECT ci.location, ci.year, ci.value AS imports,  
-                            CASE  
-                                WHEN ce.value > 0 THEN ce.value * -1 
-                            END AS exports 
-                        FROM calendar_imports ci 
-                        INNER JOIN calendar_exports ce ON ci.location=ce.location AND ci.year=ce.year
-                    ) AS cal
-                ON cal.location=inv.location AND inv.year=cal.year
-            ) AS cal2
-        ON cal2.location=cons.location AND cons.year=cal2.year
-    ) AS cal3
-ON cal3.location=l.id
-WHERE l.location='USA' AND cal3.year>2014
-ORDER BY cal3.year ASC;
-
-
-SELECT l.location, positive.year, positive.inventory, positive.imports, negative.exports, negative.consumption 
-FROM location l
-INNER JOIN
-    (
-        SELECT inv.location, inv.year, inv.value as inventory, ci.value AS imports 
-        FROM calendar_inventory inv 
-        INNER JOIN calendar_imports ci ON inv.location=ci.location AND inv.year=ci.year
-    ) AS positive
-    ON positive.location=l.id
-INNER JOIN
-    (
-        SELECT cons.location, cons.year,  
-            CASE  
-                WHEN cons.value > 0 THEN cons.value * -1 
-            END AS consumption,
-            CASE  
-                WHEN ce.value > 0 THEN ce.value * -1 
-            END AS exports
-        FROM calendar_consumption cons
-        INNER JOIN calendar_exports ce ON cons.location=ce.location AND cons.year=ce.year
-    ) AS negative
-    ON negative.location=l.id
-WHERE l.location='USA' AND positive.year>2014 AND negative.year>2014
-ORDER BY positive.year ASC;
+SELECT l.title, ci.value
+FROM calendar_imports ci
+INNER JOIN location l ON l.id=ci.location_id
+WHERE ci.value > (
+        SELECT ce.value
+        FROM calendar_exports ce
+        WHERE ce.location_id=ci.location_id
+        AND ce.year=ci.year
+    );
 
 
 
@@ -228,25 +297,13 @@ OTHER (NOT ICO)
 
 
 # TO-DO
-- Rework databases - separate exporters & importers? (need to distinguish year vs. crop year?)
 - Explain difference in "Exports (Supply)" vs. "Exports (Trade Statistics)"
-- Setup consumer "Imports"
-- Check "Non-member data"
+- Global trade flows - any holes in the data?
+- Production outflow - discrepancy in calc inv vs. reported?
+- Consumption outflow - discrepancy in calc inv vs. reported?
 
 
-
-
-
-
-import sys
-sys.path.append('../')
-import pandas as pd
-from matplotlib import pyplot as plt
-from src import connect
-conn = connect.connect()
-# colors = ["#CFC4AC","#C7C0A4","#8E9B82","#4D352D","#211F1C"]"#70193D"
-colors = ["#839B7F","#A5A181","#B18558","#2B1504","#00494F"]
-
+# PANDAS
 df = pd.read_sql("SELECT value FROM seasonal_production WHERE coffee_type=3 AND location='Brazil' ORDER BY year",conn)
 # list = [i[0] for i in query]
 # s = pd.Series(list)
@@ -283,52 +340,3 @@ b=bar.set_yticklabels([f'{x:,.0f}' for x in bar.get_yticks()])
 # b=bar.set_ylim(15000,65000)
 b=bar.set_xlabel("")
 b=bar.set_ylabel("")
-
-df = pd.read_sql("""SELECT l.title, cal3.year, cal3.inventory, cal3.imports, cal3.exports, cal3.consumption, cal3.inventory + cal3.imports + cal3.exports + cal3.consumption AS net
-FROM location l 
-INNER JOIN
-    (
-        SELECT cons.location_id, cons.year, cal2.inventory, cal2.imports, cal2.exports, 
-            CASE 
-                WHEN cons.value > 0 THEN cons.value * -1 
-            END AS consumption 
-        FROM calendar_consumption cons 
-        INNER JOIN
-            (
-                SELECT inv.location_id, inv.year, inv.value as inventory, cal.imports, cal.exports 
-                FROM calendar_inventory inv 
-                INNER JOIN
-                    (
-                        SELECT ci.location_id, ci.year, ci.value AS imports,  
-                            CASE  
-                                WHEN ce.value > 0 THEN ce.value * -1 
-                            END AS exports 
-                        FROM calendar_imports ci 
-                        INNER JOIN calendar_exports ce ON ci.location_id=ce.location_id AND ci.year=ce.year
-                    ) AS cal
-                ON cal.location_id=inv.location_id AND inv.year=cal.year
-            ) AS cal2
-        ON cal2.location_id=cons.location_id AND cons.year=cal2.year
-    ) AS cal3
-ON cal3.location_id=l.id
-WHERE l.title='USA' AND cal3.year>2014
-ORDER BY cal3.year ASC;""",conn)
-print(df)
-b1=df.loc[:,['inventory','imports','exports','consumption']].plot.bar(stacked=True, color=colors, figsize=(15,7))
-b1.set_xticklabels(df['year'].tolist(), rotation=0)
-b1.set_yticklabels([f'{x:,.0f}' for x in b1.get_yticks()])
-b1.set_ylim([min(b1.get_yticks()),max(b1.get_yticks())])
-b1.legend(loc='lower left')
-l1 = b1.twinx()
-l1.set_yticklabels([])
-l1.set_ylim([min(b1.get_yticks()),max(b1.get_yticks())])
-l1.plot(b1.get_xticks(), df['net'], label='net', marker='o', color=colors[4])
-l1.legend(loc='upper left')
-for i,x in enumerate(df['net']):
-    label = f'{x:,.0f}'
-    l1.annotate(label,
-                (i,x),
-                textcoords="offset points", # how to position the text
-                xytext=(0,10), # distance from text to points (x,y)
-                ha='center') # horizontal alignment can be left, right or center
-
