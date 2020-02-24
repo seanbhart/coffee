@@ -165,7 +165,7 @@ INNER JOIN
         ON cal2.location_id=cons.location_id AND cons.year=cal2.year
     ) AS cal3
 ON cal3.location_id=l.id
-WHERE l.title='USA' AND cal3.year>2008
+WHERE l.title='EU' AND cal3.year>2008
 ORDER BY cal3.year ASC;
 
 # Compare calculated ending inventory with reported next year inventory
@@ -191,7 +191,7 @@ INNER JOIN
     ) AS cal2
 ON cal2.location_id=inv.location_id AND inv.year=cal2.year
 INNER JOIN calendar_inventory pinv ON pinv.location_id=cal2.location_id AND pinv.year=cal2.year-1
-WHERE cal2.year>2008
+WHERE cal2.year>2008 AND cal2.location_id=72
 GROUP BY cal2.year
 ORDER BY cal2.year ASC;
 
