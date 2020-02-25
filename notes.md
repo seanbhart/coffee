@@ -169,7 +169,7 @@ WHERE l.title='EU' AND cal3.year>2008
 ORDER BY cal3.year ASC;
 
 # Compare calculated ending inventory with reported next year inventory
-SELECT cal2.year, SUM(inv.value * 66.138679), SUM((pinv.value + cal2.imports + cal2.exports + cal2.consumption) * 66.138679) AS "prior net", SUM(inv.value * 66.138679) - SUM((pinv.value + cal2.imports + cal2.exports + cal2.consumption) * 66.138679) AS discrepancy
+SELECT cal2.year, TO_CHAR(ROUND(SUM(inv.value * 66.138679)::NUMERIC,0),'9,999,999') AS "reported", TO_CHAR(ROUND(SUM((pinv.value + cal2.imports + cal2.exports + cal2.consumption) * 66.138679)::NUMERIC,0),'9,999,999') AS "calculated", TO_CHAR(ROUND((SUM(inv.value * 66.138679) - SUM((pinv.value + cal2.imports + cal2.exports + cal2.consumption) * 66.138679))::NUMERIC,0),'9,999,999') AS discrepancy
 FROM calendar_inventory inv 
 INNER JOIN
     (
@@ -191,7 +191,7 @@ INNER JOIN
     ) AS cal2
 ON cal2.location_id=inv.location_id AND inv.year=cal2.year
 INNER JOIN calendar_inventory pinv ON pinv.location_id=cal2.location_id AND pinv.year=cal2.year-1
-WHERE cal2.year>2008 AND cal2.location_id=72
+WHERE cal2.year>2008
 GROUP BY cal2.year
 ORDER BY cal2.year ASC;
 
@@ -282,7 +282,7 @@ Price Data (US cents per lb)
 
 Inventories/Consumption Data
 - Inventories - End of Year                 | 4A | SOURCE | `4A_importers_inventory.xlsx`       | db: `calendar_inventory`
-- Disappearance (consumption) - End of Year | 4B | CALC   | `4B_importers_consumption.xlsx`     | db: `calendar_consumption`
+- Disappearance (consumption) - End of Year | 4B | CALC   | `4B_importers_consumption.xlsx`     | db: `calendar_consumption` <<-- 2014+ DATA INCORRECT
 
 Non-Member Data
 - Imports - Calendar Year                   | 5A | SOURCE | `5A_importers_other_imports.xlsx`   | db: `calendar_imports`
@@ -297,10 +297,17 @@ OTHER (NOT ICO)
 
 
 # TO-DO
-- Explain difference in "Exports (Supply)" vs. "Exports (Trade Statistics)"
+- ADD LOCATION GROUPING TABLE - ALLOW CUSTOM GROUPING FOR ANALYSIS (cannot separate child/parent/regions effectively otherwise)
+- Fix overall analysis graphs - importers cannot compare reported vs. calc because consumption is calculated
+- DO NOT USE IMPORTER CONSUMPTION DATA
 - Global trade flows - any holes in the data?
 - Production outflow - discrepancy in calc inv vs. reported?
 - Consumption outflow - discrepancy in calc inv vs. reported?
+- Explain difference in "Exports (Supply)" vs. "Exports (Trade Statistics)"
+
+
+
+
 
 
 # PANDAS
